@@ -480,7 +480,7 @@ def inject_custom_css():
 
 
 def main():
-    st.set_page_config(page_title="Kapil Gupta QnA — Semantic Search", layout="wide", page_icon="🧘")
+    st.set_page_config(page_title="Kapil Gupta QnA — Semantic Search", layout="wide", page_icon="🌳")
     inject_custom_css()
 
     try:
