@@ -13,14 +13,16 @@ import streamlit.components.v1 as components
 # -----------------------------
 # Config
 # -----------------------------
-DATA_DIR = os.path.join("data", "yt_blocks")
+# Use absolute path relative to this script file to avoid CWD issues
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data", "yt_blocks")
 
 YOUTUBE_OVERRIDES_BY_ID = {
     "NGj6gDZoRTo": "https://www.youtube.com/watch?v=NGj6gDZoRTo",
     "MaBgmPcxpuE": "https://www.youtube.com/watch?v=MaBgmPcxpuE",
 }
 
-VIDEO_LINKS_JSON = os.path.join("data", "video_links.json")
+VIDEO_LINKS_JSON = os.path.join(BASE_DIR, "data", "video_links.json")
 
 MAX_MATCHES_PER_VIDEO = 2
 
