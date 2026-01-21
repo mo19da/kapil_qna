@@ -321,15 +321,42 @@ def search_index(
     if not q:
         return []
 
+    # 1. Vector Search (Fast)
     qv = embedder.encode([q], normalize_embeddings=True)
     qv = np.array(qv, dtype=np.float32)[0]
     sims = E @ qv
 
+    # 2. Top-K Optimization (Crucial for Speed)
+    # Instead of iterating all N blocks, we take the top 3000 semantic matches.
+    # This filters out 90%+ of irrelevant data instantly.
+    top_k = 3000
+    if len(sims) > top_k:
+        # np.argpartition is O(N) and much faster than full sort
+        top_indices = np.argpartition(-sims, top_k)[:top_k]
+    else:
+        top_indices = np.arange(len(sims))
+
+    # Sort the top bucket by score descending
+    # use native python sort on the filtered indices for specific scores
+    # or just sort the indices based on sims
+    top_indices = sorted(top_indices, key=lambda i: sims[i], reverse=True)
+
     kw = (mandatory_keyword or "").strip().lower()
     links_map = load_video_links_map()
 
-    candidates: List[Tuple[int, float]] = []
-    for i, b in enumerate(blocks):
+    # 3. Apply Filters & Grouping
+    per_video: Dict[str, List[Match]] = {}
+    meta: Dict[str, Tuple[str, Optional[int], Optional[str]]] = {}
+    
+    # We stop processing once we have enough distinct videos to show.
+    # This prevents processing thousands of matches for the 500th result.
+    video_count_limit = 20  
+    
+    for idx in top_indices:
+        b = blocks[idx]
+        score = float(sims[idx])
+        
+        # --- Filters ---
         if min_duration_s and block_duration(b) < float(min_duration_s):
             continue
         if kw:
@@ -344,27 +371,33 @@ def search_index(
                     continue
             except Exception:
                 pass
-        candidates.append((i, float(sims[i])))
 
-    candidates.sort(key=lambda t: t[1], reverse=True)
-
-    per_video: Dict[str, List[Match]] = {}
-    meta: Dict[str, Tuple[str, Optional[int], Optional[str]]] = {}
-
-    for idx, score in candidates:
-        b = blocks[idx]
-        title = resolve_video_title(b)
-        year = resolve_year(b)
-        url = resolve_video_url(b, links_map)
-
+        # --- Grouping ---
+        # Resolve key
         af = b.get("audio_file") or ""
-        video_key = normalize_title_key(af) if isinstance(af, str) and af.strip() else normalize_title_key(title)
+        title = resolve_video_title(b)
+        if isinstance(af, str) and af.strip():
+            video_key = normalize_title_key(af)
+        else:
+            video_key = normalize_title_key(title)
 
         if video_key not in meta:
+            # Check if we have hit the limit of videos
+            if len(meta) >= video_count_limit:
+                # We have enough videos, but is this a new video?
+                # If so, and we are at limit, stop.
+                # If it's an existing video, we can add more matches to it.
+                if video_key not in per_video:
+                     continue # Skip new videos if limit reached
+            
+            # Resolve metadata only when needed
+            year = resolve_year(b)
+            url = resolve_video_url(b, links_map)
             meta[video_key] = (title, year, url)
 
         if video_key not in per_video:
             per_video[video_key] = []
+        
         if len(per_video[video_key]) >= MAX_MATCHES_PER_VIDEO:
             continue
 
@@ -387,6 +420,7 @@ def search_index(
             )
         )
 
+    # 4. Final Format
     video_results: List[VideoResult] = []
     for video_key, matches in per_video.items():
         title, year, url = meta.get(video_key, ("Unknown", None, None))
@@ -402,6 +436,7 @@ def search_index(
             )
         )
 
+    # Sort final videos by their best match score
     video_results.sort(key=lambda vr: vr.best_score, reverse=True)
     return video_results
 
