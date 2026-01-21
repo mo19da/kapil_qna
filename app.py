@@ -137,7 +137,7 @@ class VideoResult:
 
 
 # -----------------------------
-# Loading (cached)
+# Loading (Optimized)
 # -----------------------------
 @st.cache_data(show_spinner=False)
 def load_video_links_map() -> Dict[str, str]:
@@ -173,30 +173,18 @@ def pick_semantic_index_file() -> str:
     return candidates_sorted[0]
 
 
-@st.cache_data(show_spinner=True)
-def load_semantic_index(pkl_path: str) -> Dict[str, Any]:
+@st.cache_resource(show_spinner=True)
+def load_index_data(pkl_path: str) -> Tuple[np.ndarray, List[Dict[str, Any]], str]:
+    """
+    Loads the pickle and prepares the matrix in one go.
+    Cached as a resource to avoid hashing large objects on every rerun.
+    """
     with open(pkl_path, "rb") as f:
-        obj = pickle.load(f)
-    if not isinstance(obj, dict):
+        index_obj = pickle.load(f)
+    
+    if not isinstance(index_obj, dict):
         raise ValueError("Semantic index pkl is not a dict.")
-    return obj
 
-
-@st.cache_resource(show_spinner=False)
-def load_embedder(model_name: str):
-    from sentence_transformers import SentenceTransformer
-    return SentenceTransformer(model_name)
-
-
-def _get_first_present(obj: Dict[str, Any], keys: List[str]) -> Any:
-    for k in keys:
-        if k in obj:
-            return obj[k]
-    return None
-
-
-@st.cache_data(show_spinner=False)
-def prepare_matrix(index_obj: Dict[str, Any]) -> Tuple[np.ndarray, List[Dict[str, Any]], str]:
     model_name = (
         index_obj.get("model_name")
         if isinstance(index_obj.get("model_name"), str)
@@ -220,12 +208,29 @@ def prepare_matrix(index_obj: Dict[str, Any]) -> Tuple[np.ndarray, List[Dict[str
     norms = np.linalg.norm(E, axis=1, keepdims=True)
     norms[norms == 0] = 1.0
     E = E / norms
+    
     return E, blocks, model_name
 
 
+@st.cache_resource(show_spinner=False)
+def load_embedder(model_name: str):
+    from sentence_transformers import SentenceTransformer
+    return SentenceTransformer(model_name)
+
+
+def _get_first_present(obj: Dict[str, Any], keys: List[str]) -> Any:
+    for k in keys:
+        if k in obj:
+            return obj[k]
+    return None
+
+
 # -----------------------------
-# Metadata resolution
+# Metadata resolution & Search
 # -----------------------------
+# (Reusing existing helper functions for resolution, omitted for brevity if unchanged, 
+# but ensuring search_index uses the new loader)
+
 def resolve_video_title(block: Dict[str, Any]) -> str:
     for key in ["video_title", "title", "file_title"]:
         v = block.get(key)
@@ -300,9 +305,6 @@ def block_duration(block: Dict[str, Any]) -> float:
         return 0.0
 
 
-# -----------------------------
-# Search (cached)
-# -----------------------------
 @st.cache_data(show_spinner=False)
 def search_index(
     pkl_path: str,
@@ -311,8 +313,8 @@ def search_index(
     min_duration_s: int,
     year_filter: str,
 ) -> List[VideoResult]:
-    index_obj = load_semantic_index(pkl_path)
-    E, blocks, model_name = prepare_matrix(index_obj)
+    # Use the optimized loader
+    E, blocks, model_name = load_index_data(pkl_path)
     embedder = load_embedder(model_name)
 
     q = (query or "").strip()
@@ -407,9 +409,6 @@ def search_index(
 # -----------------------------
 # UI
 # -----------------------------
-# -----------------------------
-# UI
-# -----------------------------
 def inject_custom_css():
     st.markdown(
         """
@@ -486,7 +485,7 @@ def inject_custom_css():
 
 
 def main():
-    st.set_page_config(page_title="Kapil Gupta QnA — Semantic Search", layout="wide", page_icon="🌳")
+    st.set_page_config(page_title="Kapil Gupta QnA — Semantic Search", layout="wide", page_icon="🌲")
     inject_custom_css()
 
     try:
@@ -495,8 +494,10 @@ def main():
         st.error(f"Cannot find semantic index: {e}")
         st.stop()
 
-    index_obj = load_semantic_index(pkl_path)
-    _, blocks, _ = prepare_matrix(index_obj)
+    # Load data efficiently
+    _, blocks, _ = load_index_data(pkl_path)
+    
+    # Calculate years
     years = sorted({y for y in (resolve_year(b) for b in blocks) if isinstance(y, int)})
     year_options = ["All"] + [str(y) for y in years]
 
@@ -520,7 +521,7 @@ def main():
         st.title("🔍 Search")
         st.caption("Explore the wisdom of Kapil Gupta.")
         
-        q = st.text_input("Question", value=st.session_state.get("q", ""), placeholder="e.g. What is freedom?")
+        q = st.text_input("Question", value=st.session_state.get("q", ""), placeholder="Enter your question")
         
         with st.expander("Advanced Options"):
             mandatory_keyword = st.text_input(
@@ -585,9 +586,11 @@ def main():
         st.markdown(
             """
             <div style="text-align: center; padding: 4rem 0;">
-                <h1 style="font-size: 3rem; margin-bottom: 1rem;">Kapil Gupta QnA</h1>
-                <p style="font-size: 1.2rem; opacity: 0.8;">Semantic search across transcripts. <br/>
-                Enter a question in the sidebar to begin.</p>
+                <h1 style="font-size: 3rem; margin-bottom: 0.5rem;">Kapil Gupta QnA</h1>
+                <p style="font-size: 1.1rem; opacity: 0.7; margin-bottom: 2rem; max-width: 600px; margin-left: auto; margin-right: auto;">
+                    Transcripts from Kapil's Question and Answer sessions. <br>
+                    The semantic search attempts to match your question with topics Kapil has addressed.
+                </p>
             </div>
             """, unsafe_allow_html=True
         )
