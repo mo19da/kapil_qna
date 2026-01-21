@@ -155,9 +155,15 @@ def load_video_links_map() -> Dict[str, str]:
 
 
 def pick_semantic_index_file() -> str:
+    # Try the standard data directory first
     candidates = glob.glob(os.path.join(DATA_DIR, "*.semantic.pkl"))
+    
+    # Fallback: check the current directory (GitHub root upload case)
     if not candidates:
-        raise FileNotFoundError(f"No .semantic.pkl found in {DATA_DIR}")
+        candidates = glob.glob(os.path.join(BASE_DIR, "*.semantic.pkl"))
+    
+    if not candidates:
+        raise FileNotFoundError(f"No .semantic.pkl found in {DATA_DIR} or {BASE_DIR}")
 
     # prefer final
     candidates_sorted = sorted(
